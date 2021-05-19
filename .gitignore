@@ -168,3 +168,5 @@ Thumbs.db
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode
 music_genre_classification/data/genres
 music_genre_classification/data/genres.json
+stock_data_prediction/model
+stock_data_prediction/fig

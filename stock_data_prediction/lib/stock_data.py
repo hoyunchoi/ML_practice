@@ -5,7 +5,6 @@ import pandas as pd
 import sklearn.preprocessing
 from torch.utils.data import TensorDataset, DataLoader
 
-import utils
 """
     class stock_data
 
@@ -15,7 +14,7 @@ import utils
     train_raw : raw stock data for train set. Scaled by train_scaler if scaler_name is given
     val_raw : raw stock data for validation set. Scaled by val_scaler if scaler_name is given
     test_raw : raw stock data for test set. Scaled by test_scaler if scaler_name is given
-    test_input : input data for RNN, torch.tensor(sample_num, past_len, in_features)
+    test_input : input data for RNN, torch.tensor(sample_num, past_days, in_features)
     test_output : real output data for RNN, torch.tensor(sample_num, 1, in_features)
 
     (public) Methods
@@ -28,7 +27,7 @@ class stock_data():
     def __init__(self, stocks, in_features, out_features=None,
                  train_val_test_boundary=['2014', '2016'],
                  precision='32',
-                 past_len=60,
+                 past_days=60,
                  successive_days=1,
                  scaler_name='MinMaxScaler',
                  pre_process=False,
@@ -38,7 +37,7 @@ class stock_data():
 
         #* Get file path of data
         if pre_process:
-            self.file = os.path.join("data", "pre_" + precision, utils.pre_processed_name(stocks, fmt, comp))
+            self.file = os.path.join("data", "pre_" + precision, '.'.join([stocks, fmt, comp]))
         else:
             self.file = os.path.join("data", stocks + "_2006-01-01_to_2018-01-01.csv")
 
@@ -53,7 +52,7 @@ class stock_data():
         self.common_input_idx, self.common_output_idx = self._get_common_inout_feature_idx()
 
         #* Store input variables
-        self.past_len = past_len
+        self.past_days = past_days
         self.successive_days = successive_days
         self.scaler_name = scaler_name
         self.np_float_dtype = getattr(np, 'float' + precision)
@@ -119,7 +118,7 @@ class stock_data():
 
     #* Only read file input in_features
     def _read_data_frame(self, pre_process, fmt, verbose):
-        read_column = set(['Date'] + self.in_features + self.out_features)
+        read_column = list(set(['Date'] + self.in_features + self.out_features))
         if pre_process:
             if fmt == 'parquet':
                 self.data_frame = pd.read_parquet(self.file, columns=read_column)
@@ -134,8 +133,8 @@ class stock_data():
     def _divide_raw_data(self):
         #* Get start/end (number) index of train/validation/test set
         self.train_raw_start, self.train_raw_end = 0, len(self.data_frame[:self.train_val_boundary])
-        self.val_raw_start, self.val_raw_end = self.train_raw_end - self.past_len, len(self.data_frame[:self.val_test_boundary])
-        self.test_raw_start, self.test_raw_end = self.val_raw_end - self.past_len, len(self.data_frame)
+        self.val_raw_start, self.val_raw_end = self.train_raw_end - self.past_days, len(self.data_frame[:self.val_test_boundary])
+        self.test_raw_start, self.test_raw_end = self.val_raw_end - self.past_days, len(self.data_frame)
 
         #* Get train/validation/test set
         self.train_raw = self.data_frame.iloc[:][self.train_raw_start: self.train_raw_end].values
@@ -158,23 +157,23 @@ class stock_data():
     def _save_test_output_scaler(self):
         #* Scale test output and save the scaler
         scaler = getattr(sklearn.preprocessing, self.scaler_name)()
-        scaler.fit_transform(self.test_raw[self.past_len:, self.out_features_idx])
+        scaler.fit_transform(self.test_raw[self.past_days:, self.out_features_idx])
         return scaler
 
     def _generate_rnn_dataset_from_raw(self, raw):
         #* Divide into input(x) and output(y)
-        x = np.zeros((len(raw) - self.past_len - self.successive_days + 1, self.past_len, len(self.in_features)), dtype=self.np_float_dtype)
-        y = np.zeros((len(raw) - self.past_len - self.successive_days + 1, self.successive_days, len(self.out_features)), dtype=self.np_float_dtype)
+        x = np.zeros((len(raw) - self.past_days - self.successive_days + 1, self.past_days, len(self.in_features)), dtype=self.np_float_dtype)
+        y = np.zeros((len(raw) - self.past_days - self.successive_days + 1, self.successive_days, len(self.out_features)), dtype=self.np_float_dtype)
 
-        for i in range(len(raw) - self.past_len - self.successive_days + 1):
-            x[i] = raw[i: i + self.past_len, self.in_features_idx]
-            y[i] = raw[i + self.past_len: i + self.past_len + self.successive_days, self.out_features_idx]
+        for i in range(len(raw) - self.past_days - self.successive_days + 1):
+            x[i] = raw[i: i + self.past_days, self.in_features_idx]
+            y[i] = raw[i + self.past_days: i + self.past_days + self.successive_days, self.out_features_idx]
         x, y = torch.as_tensor(x), torch.as_tensor(y)
         return TensorDataset(x, y)
 
     def _generate_rnn_dataset_from_raw_stride(self, raw):
         #* If input is test set, only calculate input since we have already done at _save_test_output_scaler
-        x = np.lib.stride_tricks.sliding_window_view(raw, self.past_len, axis=0)
+        x = np.lib.stride_tricks.sliding_window_view(raw, self.past_days, axis=0)
         y = np.lib.stride_tricks.sliding_window_view(raw, self.successive_days, axis=0)
         x = np.transpose(x[:-1, self.in_features_idx], axes=[0, 2, 1])
         y = np.transpose(y[:, self.out_features_idx], axes=[0, 2, 1])
@@ -182,7 +181,7 @@ class stock_data():
             x = torch.as_tensor(x[:-self.successive_days + 1])
         else:
             x = torch.as_tensor(x)
-        y = torch.as_tensor(y[self.past_len:])
+        y = torch.as_tensor(y[self.past_days:])
         return TensorDataset(x, y)
 
 

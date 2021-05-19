@@ -15,8 +15,8 @@ from stock_data import stock_data
     ---------------------------------------------------------------------
     check_features(in_features, out_features)
     Args:
-        in_features : Input features for RNN
-        out_features : Output features for RNN
+        in_features : Input abb_features for RNN
+        out_features : Output abb_features for RNN
     Return:
         in_features : sorted in_fetures in order of data column name
         out_features : sorted out_fetures in order of data column name
@@ -87,13 +87,25 @@ from stock_data import stock_data
 
 FEATURE_ORDER = {'Open': 0, 'High': 1, 'Low': 2, 'Close': 3}
 
+file_path_list = [file.path for file in os.scandir('data') if file.is_file()]
+stocks_list = [file_path[file_path.find("/")+1:file_path.find("_")] for file_path in file_path_list]
+STOCKS_LIST = sorted(set(stocks_list) - set(['all']))
+
+def abb2features(abb_features: str) -> list:
+    abb_list = {'O': 'Open', 'H': 'High', 'L': 'Low', 'C': 'Close'}
+    features = []
+    for abb_feature in abb_features:
+        features.append(abb_list[abb_feature])
+    return features
+
+
 
 def check_features(in_features: list, out_features: list):
     try:
         in_features.sort(key=lambda feature: FEATURE_ORDER[feature])
         out_features.sort(key=lambda feature: FEATURE_ORDER[feature])
     except KeyError:
-        print("Defined in/out features are invalid")
+        print("Defined in/out abb_features are invalid")
     return in_features, out_features
 
 
@@ -203,6 +215,7 @@ def plot_loss(train_loss_list, val_loss_list, save_path=None):
         fig.savefig(save_path, facecolor='w')
     else:
         fig.show()
+    return ax
 
 
 def average_test(model: RNN,
@@ -216,8 +229,8 @@ def average_test(model: RNN,
     successive_days = model.successive_days
 
     # * ndarray for storing prediction of machine
-    prediction_list = np.zeros((len(data.test_raw) - data.past_len, len(data.out_features)))
-    prediction_num = np.zeros(len(data.test_raw) - data.past_len)
+    prediction_list = np.zeros((len(data.test_raw) - data.past_days, len(data.out_features)))
+    prediction_num = np.zeros(len(data.test_raw) - data.past_days)
 
     #* Test loader : batch size of 1
     test_loader = data.get_test_loader()
@@ -252,7 +265,7 @@ def average_test(model: RNN,
 
     # * Rescale the predicted data
     prediction_list = data.test_output_scaler.inverse_transform(prediction_list)
-    return prediction_list
+    return prediction_list, test_loss
 
 
 def recurrent_test(model: RNN,
@@ -266,7 +279,7 @@ def recurrent_test(model: RNN,
     successive_days = model.successive_days
 
     # * ndarray for storing prediction of machine
-    prediction_list = torch.as_tensor(np.zeros((len(data.test_raw) - data.past_len - successive_days + 1, len(data.out_features)), dtype=data.test_raw.dtype), device=device)
+    prediction_list = torch.as_tensor(np.zeros((len(data.test_raw) - data.past_days - successive_days + 1, len(data.out_features)), dtype=data.test_raw.dtype), device=device)
 
     #* Test loader : batch size of 1
     test_loader = data.get_test_loader()
@@ -304,7 +317,7 @@ def recurrent_test(model: RNN,
 
     # * Rescale the predicted data
     prediction_list = data.test_output_scaler.inverse_transform(prediction_list.cpu().numpy())
-    return prediction_list
+    return prediction_list, test_loss
 
 
 def plot_prediction(data: stock_data,
@@ -325,7 +338,7 @@ def plot_prediction(data: stock_data,
             ax.plot(real_out.index[:], avg_prediction[:, i], 'b-', label='Average predicted')
 
         if recurrent_prediction is not None:
-            if data.successive_days:
+            if data.successive_days > 1:
                 ax.plot(real_out.index[:-data.successive_days + 1], recurrent_prediction[:, i], 'g-', label='Recurrent predicted')
             else:
                 ax.plot(real_out.index, recurrent_prediction[:, i], 'g-', label='Recurrent predicted')
@@ -341,7 +354,7 @@ def plot_prediction(data: stock_data,
         fig.savefig(save_path, facecolor='w')
     else:
         fig.show()
-
+    return ax
 
 def pre_processed_name(stocks, fmt='parquet', comp='snappy'):
     return '.'.join([stocks, fmt, comp])
