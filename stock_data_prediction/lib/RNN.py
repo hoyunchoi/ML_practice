@@ -25,14 +25,18 @@ class RNN(nn.Module):
         #* Get the type of rnn
         self.rnn_type = rnn_type
 
-        #* Network components
+        #* Network components : RNN
         self.rnn = getattr(nn, self.rnn_type)(input_size=self.num_in_features,
                                               hidden_size=hidden_size,
                                               num_layers=num_layers,
                                               dropout=dropout,
                                               batch_first=True,
                                               bidirectional=bidirectional)
-        self.fc = nn.Linear(in_features=hidden_size, out_features=self.num_out_features * self.successive_days)
+        #* Network components : Output layer
+        if bidirectional:
+            self.fc = nn.Linear(in_features= 2*hidden_size, out_features=self.num_out_features * self.successive_days)
+        else:
+            self.fc = nn.Linear(in_features= hidden_size, out_features=self.num_out_features * self.successive_days)
 
     def forward(self, x):
         x, _ = self.rnn(x)

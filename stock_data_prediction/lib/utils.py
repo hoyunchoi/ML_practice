@@ -8,6 +8,7 @@ from tqdm.notebook import tqdm
 
 from RNN import RNN
 from stock_data import stock_data
+from early_stopping import early_stopping
 
 """
     Various functions for making stock price predicting machine
@@ -88,16 +89,8 @@ from stock_data import stock_data
 FEATURE_ORDER = {'Open': 0, 'High': 1, 'Low': 2, 'Close': 3}
 
 file_path_list = [file.path for file in os.scandir('data') if file.is_file()]
-stocks_list = [file_path[file_path.find("/")+1:file_path.find("_")] for file_path in file_path_list]
+stocks_list = [file_path[file_path.find("/") + 1:file_path.find("_")] for file_path in file_path_list]
 STOCKS_LIST = sorted(set(stocks_list) - set(['all']))
-
-def abb2features(abb_features: str) -> list:
-    abb_list = {'O': 'Open', 'H': 'High', 'L': 'Low', 'C': 'Close'}
-    features = []
-    for abb_feature in abb_features:
-        features.append(abb_list[abb_feature])
-    return features
-
 
 
 def check_features(in_features: list, out_features: list):
@@ -131,7 +124,9 @@ def train(model: RNN,
           optimizer: torch.optim,
           train_loader: torch.utils.data.dataloader.DataLoader,
           val_loader: torch.utils.data.dataloader.DataLoader = None,
-          verbose=False):
+          early_stop_counter=0,
+          min_val_loss = np.Inf,
+          verbose=1):
     start_time = time.time()
 
     #* Use the same device where NN is at
@@ -141,13 +136,22 @@ def train(model: RNN,
     train_loss_list = np.zeros(max_epoch)
     val_loss_list = np.zeros(max_epoch)
 
-    # * Train and validate(optional)
+    #* Initialize early stopping object
+    if early_stop_counter:
+        es = early_stopping(verbose=(verbose > 0),
+                            patience=early_stop_counter,
+                            path='model/early_stop.pth',
+                            min_val_loss=min_val_loss,
+                            trace_func=tqdm.write)
+
     for epoch in tqdm(range(max_epoch), desc="Epoch", colour='green'):
+        # * Training
         model.train()
         train_loss = 0.0
         train_num = 0
 
         for x, y in train_loader:
+            # * Get input, output value
             x, y = x.to(device), y.to(device)
             batch_size = x.shape[0]
 
@@ -156,12 +160,12 @@ def train(model: RNN,
             loss = loss_func(output, y)
 
             #* Back propagation
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
 
             #* Calculate loss
-            train_loss += loss.item() * batch_size
+            train_loss += loss.item()
             train_num += batch_size
 
         #* End of a epoch. Store average loss of current epoch
@@ -184,27 +188,42 @@ def train(model: RNN,
                     loss = loss_func(output, y)
 
                     #* Calculate loss
-                    val_loss += loss.item() * batch_size
+                    val_loss += loss.item()
                     val_num += batch_size
             #* End of a epoch. Store average loss of current epoch
             val_loss /= val_num
             val_loss_list[epoch] = val_loss
 
-        if verbose:
+        #* Print the result
+        if verbose > 1:
             tqdm.write("Epoch {}/{}\t train loss: {:.6f}\t validation loss: {:.6f}".format(epoch + 1, max_epoch, train_loss, val_loss))
+
+        #* Early stopping
+        if early_stop_counter:
+            es(epoch+1, val_loss, model)
+            if es.early_stop:
+                tqdm.write("Early Stopping!")
+                break
+
     print("Train finished with {:.6f} seconds".format(time.time() - start_time))
     return train_loss_list, val_loss_list
 
 
-def plot_loss(train_loss_list, val_loss_list, save_path=None):
+def plot_loss(train_loss_list: np.ndarray,
+              val_loss_list: np.ndarray,
+              stop_epoch=None,
+              save_path=None):
     assert train_loss_list.shape == val_loss_list.shape, "train loss and validation loss should have same length"
 
     fig, ax = plt.subplots(figsize=(10, 10))
-    ax.plot(train_loss_list, 'bo-', label='train')
+    ax.plot(np.arange(1, len(train_loss_list)+1, 1), train_loss_list, 'bo-', label='train')
 
     # * Plot only when val_loss_list is not zero array
     if np.count_nonzero(val_loss_list):
-        ax.plot(val_loss_list, 'go-', label='validation')
+        ax.plot(np.arange(1, len(val_loss_list)+1, 1), val_loss_list, 'go-', label='validation')
+
+    if stop_epoch is not None:
+        ax.plot([stop_epoch, stop_epoch], [0, 1], 'r--', label="Early Stop")
 
     ax.set_xlabel("Epoch", fontsize=30)
     ax.set_ylabel("loss", fontsize=30)
@@ -355,6 +374,7 @@ def plot_prediction(data: stock_data,
     else:
         fig.show()
     return ax
+
 
 def pre_processed_name(stocks, fmt='parquet', comp='snappy'):
     return '.'.join([stocks, fmt, comp])
