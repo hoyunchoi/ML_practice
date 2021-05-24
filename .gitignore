@@ -167,6 +167,7 @@ Thumbs.db
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode
 COVID_prediction/data
+COVID_prediction/model
 music_genre_classification/data/genres*
 music_genre_classification/model
 stock_data_prediction/model
