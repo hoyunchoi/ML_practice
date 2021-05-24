@@ -166,6 +166,7 @@ Thumbs.db
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode
+COVID_prediction/data
 music_genre_classification/data/genres*
 music_genre_classification/model
 stock_data_prediction/model
