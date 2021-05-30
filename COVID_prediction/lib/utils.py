@@ -34,7 +34,9 @@ def train(model: RNN,
           train_loader: torch.utils.data.dataloader.DataLoader,
           val_loader: torch.utils.data.dataloader.DataLoader = None,
           early_stop_counter=0,
+          early_stop_delta=0,
           min_val_loss=np.Inf,
+          use_tqdm=True,
           verbose=1):
     start_time = time.time()
 
@@ -45,6 +47,14 @@ def train(model: RNN,
     train_loss_list = np.zeros(max_epoch)
     val_loss_list = np.zeros(max_epoch)
 
+    #* Whether to use tqdm
+    if use_tqdm:
+        epoch_range = tqdm(range(max_epoch), desc="Epoch", colour='green')
+        trace_func = tqdm.write
+    else:
+        epoch_range = range(max_epoch)
+        trace_func = print
+
     #* Initialize early stopping object
     if early_stop_counter:
         best_model = None
@@ -52,10 +62,10 @@ def train(model: RNN,
         es = early_stopping(verbose=verbose,
                             patience=early_stop_counter,
                             min_val_loss=min_val_loss,
-                            delta=2e-3,
-                            trace_func=tqdm.write)
+                            delta=early_stop_delta,
+                            trace_func=trace_func)
 
-    for epoch in tqdm(range(max_epoch), desc="Epoch", colour='green'):
+    for epoch in epoch_range:
         #* Training
         model.train()
         train_loss = 0.0
@@ -107,8 +117,8 @@ def train(model: RNN,
 
         #* Print the result
         if verbose > 1:
-            tqdm.write("Epoch {}/{}".format(epoch + 1, max_epoch), end='\t')
-            tqdm.write("train loss: {:.6f}\t validation loss: {:.6f}".format(train_loss, val_loss))
+            trace_func("Epoch {}/{}".format(epoch + 1, max_epoch), end='\t')
+            trace_func("train loss: {:.6f}\t validation loss: {:.6f}".format(train_loss, val_loss))
 
         #* Early stopping
         if early_stop_counter:
@@ -116,7 +126,8 @@ def train(model: RNN,
                 best_epoch = epoch
                 best_model = model.state_dict()
             if es.early_stop:
-                tqdm.write("Early Stopping!")
+                if verbose:
+                    trace_func("Early Stopping!")
                 break
 
     if not early_stop_counter:
@@ -141,7 +152,7 @@ def plot_loss(train_loss_list: np.ndarray,
         ax.plot(np.arange(1, len(val_loss_list) + 1, 1), val_loss_list, 'go-', label='validation')
 
     if stop_epoch is not None:
-        ax.plot([stop_epoch, stop_epoch], [0, train_loss_list[0]], 'r--', label="Early Stop")
+        ax.plot([stop_epoch, stop_epoch], [0, max(train_loss_list[0], val_loss_list[0])], 'r--', label="Early Stop")
 
     ax.set_xlabel("Epoch", fontsize=30)
     ax.set_ylabel("loss", fontsize=30)
@@ -241,7 +252,7 @@ def recurrent_test(model: RNN,
             #* Calculate loss
             if loss_func is not None:
                 loss = loss_func(prediction, y[:, 0, :])
-                test_loss += loss.item()
+                test_loss += loss.item() * successive_days
 
     #* Average loss
     test_loss /= i + 1
@@ -294,6 +305,21 @@ def plot_prediction(data: covid_data,
         fig.show()
     return ax
 
+# def plot_confirmed(data:covid_data, prediction:np.ndarray):
+#     predicted_confirmed = prediction[:, 0] * prediction[:, 1]
+#     confirmed = data.data_frame[data.train_val_boundary:]['confirmed']
+#     confirmed = confirmed[1:]
+#     fig, ax = plt.subplots(figsize=(10,10))
+#     ax.plot(confirmed, 'k-', label='real confirmed')
+#     ax.plot(confirmed.index, predicted_confirmed, 'b-', label='predicted confirmed')
+#     ax.set_xlabel("Date", fontsize=25)
+#     ax.set_ylabel("Cases", fontsize=25)
+#     ax.legend(loc='best', fontsize=25, frameon=False)
+#     ax.tick_params(axis='both', labelsize=20, direction='in')
+#     fig.autofmt_xdate()
+#     fig.show()
+
+#     return ax
 
 if __name__ == "__main__":
     print("This is module utils")

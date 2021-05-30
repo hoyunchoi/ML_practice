@@ -72,8 +72,7 @@ class covid_data():
 
     #* Only read file for in_features and out_features
     def _read_data_frame(self, last_day):
-        read_column = list(set(['date'] + self.in_features + self.out_features))
-        df = pd.read_parquet(path=os.path.join('data', last_day+'.parquet.snappy'), columns=read_column)
+        df = pd.read_parquet(path=os.path.join('data', last_day+'.parquet.snappy'))
         return df
 
     #* Get index of in/out features at data_frame
