@@ -192,3 +192,6 @@ class pre_process():
 
     def dtypes(self):
         return self.df.dtypes
+
+if __name__=="__main__":
+    print("This is module pre_process")

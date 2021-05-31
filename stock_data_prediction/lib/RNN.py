@@ -13,6 +13,8 @@ import torch.nn as nn
 """
 
 #* Generate RNN
+
+
 class RNN(nn.Module):
     def __init__(self, rnn_type, in_features, out_features=None, successive_days=1, hidden_size=50, num_layers=4, dropout=0.2, bidirectional=False):
         super(RNN, self).__init__()
@@ -32,16 +34,19 @@ class RNN(nn.Module):
                                               dropout=dropout,
                                               batch_first=True,
                                               bidirectional=bidirectional)
+
         #* Network components : Output layer
         if bidirectional:
-            self.fc = nn.Linear(in_features= 2*hidden_size, out_features=self.num_out_features * self.successive_days)
+            self.fc = nn.Linear(in_features=2 * hidden_size, out_features=self.num_out_features * self.successive_days)
         else:
-            self.fc = nn.Linear(in_features= hidden_size, out_features=self.num_out_features * self.successive_days)
+            self.fc = nn.Linear(in_features=hidden_size, out_features=self.num_out_features * self.successive_days)
+        nn.init.xavier_uniform_(self.fc.weight)
 
     def forward(self, x):
         x, _ = self.rnn(x)
         x = self.fc(x[:, -1, :])
-        return x.view(x.shape[0], self.successive_days, self.num_out_features)
+        return x.view(-1, self.successive_days, self.num_out_features)
 
-if __name__ == "main":
+
+if __name__ == "__main__":
     print("This is module RNN")

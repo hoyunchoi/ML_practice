@@ -32,7 +32,7 @@ class stock_data():
                  past_days=60,
                  successive_days=1,
                  scaler_name='MinMaxScaler',
-                 pre_process=False,
+                 pre_process=True,
                  use_stock_dataset=False,
                  fmt='parquet',
                  comp='snappy',
