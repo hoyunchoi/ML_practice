@@ -1,5 +1,6 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch._C import device
+from torch.utils.data import Dataset
 
 
 class stock_dataset(Dataset):

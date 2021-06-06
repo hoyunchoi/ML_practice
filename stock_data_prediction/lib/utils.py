@@ -1,10 +1,15 @@
 import os
 import time
+import matplotlib
 import torch
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
+from torch import optim
 from torchinfo import summary
 from tqdm.notebook import tqdm
+import torch.autograd.profiler as profiler
+from sklearn.metrics import mean_squared_error
 
 from RNN import RNN
 from stock_data import stock_data
@@ -30,9 +35,21 @@ from early_stopping import early_stopping
     Return:
         None
     ---------------------------------------------------------------------
+    benchmark(model, loss_func, optimizer, train_loader, sort_by, save_path)
+    Benchmark the model with torch.autograd.profiler
+    Args:
+        model : RNN model
+        loss_func : pytorch loss function for training
+        optimizer : pytorch optimizer for updating model parameter
+        train_loader : pytorch data loader for training
+        sort_by : Sorted order ex)self_cpu_time_total, cuda_time_total,...
+        save_path: path to save profiled text
+    Return:
+        None
+    ---------------------------------------------------------------------
     train(model, max_epoch, loss_func, optimizer, train_loader, val_loader=None, device=None)
     Args:
-        model : NN model
+        model : RNN model
         max_epoch : number of epochs to train
         loss_func : pytorch loss function for training
         optimizer : pytorch optimizer for updating model parameter
@@ -118,40 +135,92 @@ def model_summary(model: RNN, input_size, precision='32'):
             col_width=16)
 
 
+def benchmark(model: RNN,
+              loss_func: torch.nn.modules.loss,
+              optimizer: torch.optim,
+              train_loader: torch.utils.data.dataloader.DataLoader,
+              sort_by='self_cpu_time_total',
+              save_path='profile.txt'
+              ):
+    #* Use the same device where NN is at
+    device = next(model.parameters()).device
+
+    #* warmup
+    train(model, max_epoch=4, loss_func=loss_func, optimizer=optimizer, train_loader=train_loader, verbose=0)
+
+    #* Do profiling
+    model.train()
+    train_loss = 0.0
+    train_num = 0
+    for x,y in train_loader:
+        with profiler.profile(profile_memory=True,
+                            with_stack=True,
+                            use_cuda=True
+                            ) as prof:
+            with profiler.record_function("Feed Forward"):
+                x,y = x.to(device), y.to(device)
+                batch_size = x.shape[0]
+                output = model(x)
+            with profiler.record_function("Get Loss"):
+                loss = loss_func(output, y)
+                train_loss += loss.item()
+                train_num += batch_size
+            with profiler.record_function("Back Propagation"):
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+
+    prof.export_chrome_trace(save_path + ".json")
+    with open(save_path + ".txt", 'w') as f:
+        f.write("Sort by {}".format(sort_by))
+        f.write(prof.key_averages(group_by_stack_n=5).table(sort_by=sort_by, row_limit=10))
+
 def train(model: RNN,
           max_epoch,
           loss_func: torch.nn.modules.loss,
           optimizer: torch.optim,
           train_loader: torch.utils.data.dataloader.DataLoader,
           val_loader: torch.utils.data.dataloader.DataLoader = None,
-          early_stop_counter=0,
-          min_val_loss = np.Inf,
+          early_stop_patience=0,
+          early_stop_delta=0,
+          min_val_loss=np.Inf,
+          use_tqdm=True,
           verbose=1):
     start_time = time.time()
 
     #* Use the same device where NN is at
     device = next(model.parameters()).device
 
-    # * ndarray for storing loss per each epoch
-    train_loss_list = np.zeros(max_epoch)
-    val_loss_list = np.zeros(max_epoch)
+    #* ndarray for storing loss per each epoch
+    train_loss_list = torch.zeros(max_epoch).to(device)
+    val_loss_list = torch.zeros(max_epoch).to(device)
+
+    #* Whether to use tqdm
+    if use_tqdm:
+        epoch_range = tqdm(range(max_epoch), desc="Epoch", colour='green')
+        trace_func = tqdm.write
+    else:
+        epoch_range = range(max_epoch)
+        trace_func = print
 
     #* Initialize early stopping object
-    if early_stop_counter:
-        es = early_stopping(verbose=(verbose > 0),
-                            patience=early_stop_counter,
-                            path='model/early_stop.pth',
+    if early_stop_patience:
+        best_model = None
+        best_epoch = -1
+        es = early_stopping(verbose=verbose,
+                            patience=early_stop_patience,
                             min_val_loss=min_val_loss,
-                            trace_func=tqdm.write)
+                            delta=early_stop_delta,
+                            trace_func=trace_func)
 
-    for epoch in tqdm(range(max_epoch), desc="Epoch", colour='green'):
-        # * Training
+    for epoch in epoch_range:
+        #* Training
         model.train()
         train_loss = 0.0
         train_num = 0
 
         for x, y in train_loader:
-            # * Get input, output value
+            #* Get input, output value
             x, y = x.to(device), y.to(device)
             batch_size = x.shape[0]
 
@@ -196,44 +265,60 @@ def train(model: RNN,
 
         #* Print the result
         if verbose > 1:
-            tqdm.write("Epoch {}/{}\t train loss: {:.6f}\t validation loss: {:.6f}".format(epoch + 1, max_epoch, train_loss, val_loss))
+            trace_func("Epoch {}/{}".format(epoch + 1, max_epoch), end='\t')
+            trace_func("train loss: {:.6f}\t validation loss: {:.6f}".format(train_loss, val_loss))
 
         #* Early stopping
-        if early_stop_counter:
-            es(epoch+1, val_loss, model)
+        if early_stop_patience:
+            if es(epoch + 1, val_loss):
+                best_epoch = epoch
+                best_model = model.state_dict()
             if es.early_stop:
-                tqdm.write("Early Stopping!")
+                if verbose:
+                    trace_func("Early Stopping!")
                 break
 
-    print("Train finished with {:.6f} seconds".format(time.time() - start_time))
-    return train_loss_list, val_loss_list
+    if not early_stop_patience:
+        best_model = model.state_dict()
+        best_epoch = max_epoch - 1
+        min_val_loss = val_loss_list[-1]
+    else:
+        min_val_loss = es.min_val_loss
+
+    print("Train finished with {:.6f} seconds, {} epochs, {:.6f} validation loss".format(time.time() - start_time, epoch, min_val_loss))
+    return train_loss_list.cpu().numpy(), val_loss_list.cpu().numpy(), (best_model, best_epoch)
 
 
 def plot_loss(train_loss_list: np.ndarray,
               val_loss_list: np.ndarray,
+              ax: matplotlib.axes = None,
               stop_epoch=None,
               save_path=None):
     assert train_loss_list.shape == val_loss_list.shape, "train loss and validation loss should have same length"
 
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.plot(np.arange(1, len(train_loss_list)+1, 1), train_loss_list, 'bo-', label='train')
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 10))
+    ax.plot(np.arange(1, len(train_loss_list) + 1, 1), train_loss_list, 'bo-', label='train')
 
-    # * Plot only when val_loss_list is not zero array
+    #* Plot only when val_loss_list is not zero array
     if np.count_nonzero(val_loss_list):
-        ax.plot(np.arange(1, len(val_loss_list)+1, 1), val_loss_list, 'go-', label='validation')
+        ax.plot(np.arange(1, len(val_loss_list) + 1, 1), val_loss_list, 'go-', label='validation')
 
     if stop_epoch is not None:
-        ax.plot([stop_epoch, stop_epoch], [0, 1], 'r--', label="Early Stop")
+        ax.plot([stop_epoch, stop_epoch], [0, max(np.max(train_loss_list), np.max(val_loss_list))], 'r--', label="Early Stop")
 
     ax.set_xlabel("Epoch", fontsize=30)
     ax.set_ylabel("loss", fontsize=30)
     ax.legend(loc='best', fontsize=30, frameon=False)
     ax.tick_params(axis='both', labelsize=20, direction='in')
 
-    if save_path:
-        fig.savefig(save_path, facecolor='w')
-    else:
-        fig.show()
+    try:
+        if save_path:
+            fig.savefig(save_path, facecolor='w')
+        else:
+            fig.show()
+    except UnboundLocalError:
+        pass
     return ax
 
 
@@ -247,7 +332,7 @@ def average_test(model: RNN,
     device = next(model.parameters()).device
     successive_days = model.successive_days
 
-    # * ndarray for storing prediction of machine
+    #* ndarray for storing prediction of machine
     prediction_list = np.zeros((len(data.test_raw) - data.past_days, len(data.out_features)))
     prediction_num = np.zeros(len(data.test_raw) - data.past_days)
 
@@ -276,15 +361,20 @@ def average_test(model: RNN,
     test_loss /= i + 1
     prediction_list /= prediction_num[:, np.newaxis]
 
+    #* Rescale the predicted data
+    prediction_list = data.test_output_scaler.inverse_transform(prediction_list)
+
+    #* Get MSE Loss
+    real_out = data.data_frame[data.val_test_boundary:][data.out_features]
+    mse = mean_squared_error(y_true=real_out, y_pred=prediction_list) / len(data.out_features)
+
     #* Print the result
     if verbose:
         print("Average test finished with {:.2f} seconds".format(time.time() - start_time))
         if loss_func is not None:
-            print("Loss: {:.6f}".format(test_loss))
+            print("MSE: {:.6f}".format(mse))
 
-    # * Rescale the predicted data
-    prediction_list = data.test_output_scaler.inverse_transform(prediction_list)
-    return prediction_list, test_loss
+    return prediction_list, test_loss, mse
 
 
 def recurrent_test(model: RNN,
@@ -297,13 +387,13 @@ def recurrent_test(model: RNN,
     device = next(model.parameters()).device
     successive_days = model.successive_days
 
-    # * ndarray for storing prediction of machine
+    #* ndarray for storing prediction of machine
     prediction_list = torch.as_tensor(np.zeros((len(data.test_raw) - data.past_days - successive_days + 1, len(data.out_features)), dtype=data.test_raw.dtype), device=device)
 
     #* Test loader : batch size of 1
     test_loader = data.get_test_loader()
 
-    # * Do prediction
+    #* Do prediction
     model.eval()
     test_loss = 0.0
     with torch.no_grad():
@@ -320,23 +410,28 @@ def recurrent_test(model: RNN,
             #* Save the prediction
             prediction_list[i] = prediction.squeeze(0)
 
-            # * Calculate loss
+            #* Calculate loss
             if loss_func is not None:
                 loss = loss_func(prediction, y[:, 0, :])
-                test_loss += loss.item()
+                test_loss += loss.item() * successive_days
 
     #* Average loss
     test_loss /= i + 1
+
+    #* Rescale the predicted data
+    prediction_list = data.test_output_scaler.inverse_transform(prediction_list.cpu().numpy())
+
+    #* Get MSE Loss
+    real_out = data.data_frame[data.val_test_boundary:][data.out_features]
+    mse = mean_squared_error(y_true=real_out[:len(prediction_list)], y_pred=prediction_list) / len(data.out_features)
 
     #* Print the result
     if verbose:
         print("Recurrent test finished with {:.2f} seconds".format(time.time() - start_time))
         if loss_func is not None:
-            print("Loss: {:.6f}".format(test_loss))
+            print("MSE: {:.6f}".format(mse))
 
-    # * Rescale the predicted data
-    prediction_list = data.test_output_scaler.inverse_transform(prediction_list.cpu().numpy())
-    return prediction_list, test_loss
+    return prediction_list, test_loss, mse
 
 
 def plot_prediction(data: stock_data,
@@ -380,5 +475,5 @@ def pre_processed_name(stocks, fmt='parquet', comp='snappy'):
     return '.'.join([stocks, fmt, comp])
 
 
-if __name__ == "main":
+if __name__ == "__main__":
     print("This is module utils")
