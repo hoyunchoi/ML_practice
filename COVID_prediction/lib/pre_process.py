@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-def save(df: pd.core.frame.DataFrame, save_path: str):
+def save(df: pd.DataFrame, save_path: str):
     df.to_parquet(save_path, compression='snappy')
 
 class pre_process():

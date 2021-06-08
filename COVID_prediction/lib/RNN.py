@@ -1,5 +1,5 @@
 import torch.nn as nn
-
+import typing
 """
     class RNN
 
@@ -16,7 +16,9 @@ import torch.nn as nn
 
 
 class RNN(nn.Module):
-    def __init__(self, rnn_type, in_features, out_features=None, successive_days=1, hidden_size=50, num_layers=4, dropout=0.2, bidirectional=False):
+    def __init__(self, rnn_type: str,
+                 in_features: typing.List[str],
+                 out_features: typing.List[str] = None, successive_days=1, hidden_size=50, num_layers=4, dropout=0.2, bidirectional=False):
         super(RNN, self).__init__()
 
         #* If out features are given, return it. Else, out feature is same as in features
