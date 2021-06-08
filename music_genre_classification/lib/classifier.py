@@ -11,6 +11,8 @@ import numpy as np
 """
 
 
+#? Use module list for CNN
+
 class FNN(nn.Module):
     def __init__(self, input_shape, output_size,
                  hidden_size1=512, hidden_size2=256, hidden_size3=64,
@@ -82,12 +84,12 @@ class CNN(nn.Module):
     def forward(self, x: torch.Tensor):
 
         #* Convolutional layers
-        x = self.activation(self.conv1(x))
-        x = self.batch_norm1(self.max_pool1(self.zero_pad1(x)))
-        x = self.activation(self.conv2(x))
-        x = self.batch_norm2(self.max_pool2(self.zero_pad2(x)))
-        x = self.activation(self.conv3(x))
-        x = self.batch_norm3(self.max_pool3(self.zero_pad3(x)))
+        x = self.max_pool1(self.zero_pad1(self.conv1(x)))
+        x = self.activation(self.batch_norm1(x))
+        x = self.max_pool2(self.zero_pad2(self.conv2(x)))
+        x = self.activation(self.batch_norm2(x))
+        x = self.max_pool3(self.zero_pad3(self.conv3(x)))
+        x = self.activation(self.batch_norm3(x))
 
         #* Fully connected layers
         x = torch.flatten(x, start_dim=1)

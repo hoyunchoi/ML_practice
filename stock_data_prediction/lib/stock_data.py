@@ -1,9 +1,12 @@
 import os
+import typing
 import torch
 import numpy as np
 import pandas as pd
+import argparse
 import sklearn.preprocessing
 from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data.dataset import Dataset
 
 from stock_dataset import stock_dataset
 """
@@ -26,37 +29,33 @@ from stock_dataset import stock_dataset
 
 
 class stock_data():
-    def __init__(self, stocks, in_features, out_features=None,
-                 train_val_test_boundary=['2014', '2016'],
-                 precision='32',
-                 past_days=60,
-                 successive_days=1,
-                 scaler_name='MinMaxScaler',
-                 pre_process=True,
-                 use_stock_dataset=False,
-                 fmt='parquet',
-                 comp='snappy',
-                 verbose=False):
-
+    def __init__(self, param: argparse.Namespace,
+                 train_val_test_boundary: typing.List[str] = ['2014', '2016'],
+                 fmt: str = 'parquet',
+                 comp: str = 'snappy',
+                 pre_process: bool = True,
+                 use_dataset: bool = True,
+                 verbose: bool = False):
         #* Store input variables
-        self.past_days = past_days
-        self.successive_days = successive_days
-        self.scaler_name = scaler_name
-        self.np_float_dtype = getattr(np, 'float' + precision)
+        self.past_days = param.past_days
+        self.successive_days = param.successive_days
+        self.scaler_name = param.scaler_name
+        self.precision = param.precision
+        self.np_float_dtype = getattr(np, 'float' + self.precision)
 
         #* Get file path of data
         if pre_process:
-            self.file = os.path.join("data", "pre_" + precision, '.'.join([stocks, fmt, comp]))
+            self.file = os.path.join("data", "pre_" + self.precision, '.'.join([param.stocks, fmt, comp]))
         else:
-            self.file = os.path.join("data", stocks + "_2006-01-01_to_2018-01-01.csv")
+            self.file = os.path.join("data", self.stocks + "_2006-01-01_to_2018-01-01.csv")
 
         #* Boundary of train/validation and validation/test
         self.train_val_boundary = pd.Timestamp(train_val_test_boundary[0])
         self.val_test_boundary = pd.Timestamp(train_val_test_boundary[1])
 
         #* Store feature information
-        self.in_features = in_features
-        self.out_features = self.in_features if out_features == None else out_features
+        self.in_features = param.in_features
+        self.out_features = param.out_features
         self.common_features = set(self.in_features).intersection(self.out_features)
         self.common_input_idx, self.common_output_idx = self._get_common_idx()
 
@@ -78,10 +77,10 @@ class stock_data():
             self.test_raw = self._scale_raw_data(self.test_raw, 'test')
 
         #* Generate input output data for RNN structure
-        if use_stock_dataset:
-            self.train_dataset = stock_dataset(self.train_raw, self.past_days, self.successive_days, self.in_features_idx, self.out_features_idx)
-            self.val_dataset = stock_dataset(self.val_raw, self.past_days, self.successive_days, self.in_features_idx, self.out_features_idx)
-            self.test_dataset = stock_dataset(self.test_raw, self.past_days, self.successive_days, self.in_features_idx, self.out_features_idx)
+        if use_dataset:
+            self.train_dataset = stock_dataset(param, self.train_raw, self.in_features_idx, self.out_features_idx)
+            self.val_dataset = stock_dataset(param, self.val_raw, self.in_features_idx, self.out_features_idx)
+            self.test_dataset = stock_dataset(param, self.test_raw, self.in_features_idx, self.out_features_idx)
         elif np.__version__ >= '1.20.0':
             self.train_dataset = self._generate_rnn_dataset_from_raw_stride(self.train_raw)
             self.val_dataset = self._generate_rnn_dataset_from_raw_stride(self.val_raw)
@@ -101,24 +100,35 @@ class stock_data():
             x, y = self.test_dataset[0]
             print("Number of test set:", len(self.test_dataset), "with input:", x.shape, "output:", y.shape)
 
-
     #* Return pytorch data loader for train set
-    def get_train_loader(self, batch_size=32, num_workers=4):
-        train_loader = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    def get_train_loader(self, batch_size: int = 64,
+                         num_workers: int = 4) -> DataLoader:
+        train_loader = DataLoader(self.train_dataset,
+                                  batch_size=batch_size,
+                                  shuffle=True,
+                                  num_workers=num_workers,
+                                  pin_memory=True)
         return train_loader
 
     #* Return pytorch data loader for validation set
-    def get_val_loader(self, batch_size=32, num_workers=4):
-        val_loader = DataLoader(self.val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    def get_val_loader(self, batch_size: int = 64,
+                       num_workers: int = 4) -> DataLoader:
+        val_loader = DataLoader(self.val_dataset,
+                                batch_size=batch_size, shuffle=False,
+                                num_workers=num_workers,
+                                pin_memory=True)
         return val_loader
 
     #* Return pytorch data loader for test set
-    def get_test_loader(self):
-        test_loader = DataLoader(self.test_dataset, batch_size=1, shuffle=False, pin_memory=True)
+    def get_test_loader(self) -> DataLoader:
+        test_loader = DataLoader(self.test_dataset,
+                                 batch_size=1,
+                                 shuffle=False,
+                                 pin_memory=True)
         return test_loader
 
     #* Only read file for in_features and out_features
-    def _read_data_frame(self, pre_process, fmt, verbose):
+    def _read_data_frame(self, pre_process: bool, fmt: str, verbose: bool) -> pd.DataFrame:
         read_column = list(set(['Date'] + self.in_features + self.out_features))
         if pre_process:
             if fmt == 'parquet':
@@ -130,13 +140,13 @@ class stock_data():
         return df
 
     #* Get index of in/out features at data_frame
-    def _get_feature_idx(self):
+    def _get_feature_idx(self) -> typing.Tuple[list]:
         in_features_idx = [self.data_frame.columns.get_loc(feature) for feature in self.in_features]
         out_features_idx = [self.data_frame.columns.get_loc(feature) for feature in self.out_features]
         return in_features_idx, out_features_idx
 
     #* Get index of common_features at in_feautures and out_features
-    def _get_common_idx(self):
+    def _get_common_idx(self) -> typing.Tuple[list]:
         common_input_idx, common_output_idx = [], []
         for feature in self.common_features:
             common_input_idx.append(self.in_features.index(feature))
@@ -144,7 +154,7 @@ class stock_data():
         return common_input_idx, common_output_idx
 
     #* Divide raw data into train/validation/test raw data
-    def _divide_raw_data(self):
+    def _divide_raw_data(self) -> typing.Tuple[np.ndarray]:
         #* Get start/end (number) index of train/validation/test set
         train_raw_start, train_raw_end = 0, len(self.data_frame[:self.train_val_boundary])
         val_raw_start, val_raw_end = train_raw_end - self.past_days, len(self.data_frame[:self.val_test_boundary])
@@ -157,7 +167,7 @@ class stock_data():
         return train_raw, val_raw, test_raw
 
     #* Return scaled data
-    def _scale_raw_data(self, raw, name):
+    def _scale_raw_data(self, raw: np.ndarray, name: str) -> np.ndarray:
         scaler = getattr(sklearn.preprocessing, self.scaler_name)()
         raw = scaler.fit_transform(raw)
         if name == "train":
@@ -175,7 +185,7 @@ class stock_data():
         scaler.fit_transform(self.test_raw[self.past_days:, self.out_features_idx])
         return scaler
 
-    def _generate_rnn_dataset_from_raw(self, raw):
+    def _generate_rnn_dataset_from_raw(self, raw: np.ndarray) -> Dataset:
         #* Divide into input(x) and output(y)
         x = np.zeros((len(raw) - self.past_days - self.successive_days + 1, self.past_days, len(self.in_features)), dtype=self.np_float_dtype)
         y = np.zeros((len(raw) - self.past_days - self.successive_days + 1, self.successive_days, len(self.out_features)), dtype=self.np_float_dtype)
@@ -186,7 +196,7 @@ class stock_data():
         x, y = torch.as_tensor(x), torch.as_tensor(y)
         return TensorDataset(x, y)
 
-    def _generate_rnn_dataset_from_raw_stride(self, raw):
+    def _generate_rnn_dataset_from_raw_stride(self, raw: np.ndarray) -> Dataset:
         #* If input is test set, only calculate input since we have already done at _save_test_output_scaler
         x = np.lib.stride_tricks.sliding_window_view(raw, self.past_days, axis=0)
         y = np.lib.stride_tricks.sliding_window_view(raw, self.successive_days, axis=0)
@@ -200,5 +210,5 @@ class stock_data():
         return TensorDataset(x, y)
 
 
-if __name__ == "main":
+if __name__ == "__main__":
     print("This is module stock_data")

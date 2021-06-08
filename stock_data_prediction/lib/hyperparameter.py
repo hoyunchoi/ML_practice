@@ -1,201 +1,145 @@
 import utils
-from utils import STOCKS_LIST, FEATURE_ORDER
 import torch
 import torch.optim as optim
 import torch.nn as nn
 from stock_data import stock_data
 from RNN import RNN
 import time
+import argparse
 
 
-class default_parameter():
-    #* Set default values
-    def __init__(self):
-        #* Basic parameters
-        self.precision = '32'
+FEATURE_ABBREVIATION = {'O': 'Open', 'C': 'Close', 'H': 'High', 'L': 'Low'}
 
-        #* Parameters for data input
-        self.stocks = "AMZN"
-        self.feature_abbreviation = {'O': 'Open',
-                                     'C': 'Close',
-                                     'H': 'High',
-                                     'L': 'Low'}
-        self.in_features = ['Open', 'Close', 'High', 'Low']
-        self.out_features = ['High', 'Low']
 
-        #* Parameters for processed data
-        self.past_days = 80  # ! 60(2) -> 80(9)
-        self.successive_days = 1
-        self.scaler_name = 'MinMaxScaler'  # ! MinMaxScaler(1) -> MinMaxScaler(9)
+def set_default() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    args = parser.parse_args('')
 
-        #* Parameters for NN
-        self.rnn_name = 'LSTM'  # ! GRU(1) -> LSTM(6)
-        self._update_rnn_type()
-        self.num_layers = 3  # ! 3(3) -> 10
-        self.hidden_size = 200  # ! 200(3) -> 10
-        self.dropout = 0.1  # ! 0.0(4) -> 0.1(8)
+    #* Basic parameters
+    args.precision = '32'
+    args.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-        #* Parameters for training
-        self.optimizer_name = 'RMSprop'  # ! Adam(5) -> RMSprop(7)
-        self.learning_rate = 5e-4  # ! 1e-3(5) -> 5e-4(7)
-        self.L2_regularization = 1e-5  # ! 1e-4(4) -> 1e-5(8)
-        self.loss_name = 'SmoothL1Loss'  # ! L1Loss(2) -> SmoothL1Loss(6)
+    #* Parameters for data input
+    args.stocks = "AMZN"
+    args.stocks_list = ['AMZN']
+    args.in_features = ['High', 'Low']
+    args.out_features = ['High', 'Low']
 
-        #* Parameters for early stopping
-        self.early_stop_patience = 10
-        self.early_stop_delta = 0
+    #* Parameters for processed data
+    #? 10, 20, 30, 40, 50, 60, 70, 80, 90, 100
+    args.past_days = 30                                     # ! 30(2)
+    args.successive_days = 5
+    #? 'MinMaxScaler', 'StandardScaler'
+    args.scaler_name = 'StandardScaler'                     # ! StandardScaler(2)
 
-        #* Get prefix of parameters
-        self.prefix = ''
-        self.update_prefix()
+    #* Parameters for NN
+    #? 'RNN', 'LSTM', 'GRU', 'biRNN', 'biLSTM', 'biGRU'
+    args.rnn_name = 'GRU'                                   # ! GRU(1)
+    #? 1,2,3,4,5
+    args.num_layers = 1                                     # ! 1(3)
+    #? 50, 100, 150, 200, 250, 300, 350, 400, 450, 500
+    args.hidden_size = 150                                  # ! 150(3)
+    #? 0.0, 0.1, 0.2, 0.3, 0.4, 0.5
+    args.dropout = 0.2                                      # ! 0.2(5)
+    #? True, False
+    args.use_bn = False                                     # ! False(4)
 
-    def update_prefix(self):
-        #* Basic information
-        self.prefix = '_'.join([self.stocks, self.precision, self.rnn_name])
+    #* Parameters for training
+    args.train_batch = 512
+    args.val_batch = 512
+    #? 'Adam', 'RMSprop', 'SGD', 'Adagrad', 'Adadelta'
+    args.optimizer_name = 'Adam'                            # ! Adam(6)
+    #? 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2
+    args.learning_rate = 0.005                              # ! 0.005(6)
+    #? 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2
+    args.L2 = 0.05                                          # ! 0.05(4,5)
+    #? 'L1Loss', 'SmoothL1Loss', 'MSELoss'
+    args.loss_name = 'MSELoss'                              # ! MSELoss(1)
 
-        #* Features
-        self.prefix += '_' + ''.join([feature[0] for feature in self.in_features]) + '2' + ''.join([feature[0] for feature in self.out_features])
+    #* Parameters for early stopping
+    args.early_stop_patience = 10
+    args.early_stop_delta = 0
+    return args
 
-        #* Past days and successive days
-        self.prefix += '_'.join(['',
-                                 'PD{}'.format(self.past_days),
-                                 'SD{}'.format(self.successive_days)])
 
-        #* scaler
-        self.prefix += '_' + self.scaler_name[:self.scaler_name.find("Scaler")]
+def generate_prefix(args: argparse.Namespace) -> str:
+    #* Basic information
+    prefix = '_'.join([args.stocks, args.precision, args.rnn_name])
 
-        #* NN hyper parameters
-        self.prefix += '_'.join(['',
-                                 'NL{}'.format(self.num_layers),
-                                 'HL{}'.format(self.hidden_size),
-                                 'DO{}'.format(self.dropout)])
+    #* Features
+    prefix += '_' + ''.join([feature[0] for feature in args.in_features]) + '2' + ''.join([feature[0] for feature in args.out_features])
 
-        #* Train hyper parameters
-        self.prefix += '_'.join(['',
-                                 self.optimizer_name,
-                                 'LR{}'.format(self.learning_rate),
-                                 'RG{}'.format(self.L2_regularization),
-                                 self.loss_name])
+    #* Past days and successive days
+    prefix += '_'.join(['',
+                        'PD{}'.format(args.past_days),
+                        'SD{}'.format(args.successive_days)])
 
-    def read_prefix(self, prefix: str):
-        param_list = prefix.split('_')
+    #* scaler
+    prefix += '_' + args.scaler_name[:args.scaler_name.find("Scaler")]
 
-        #* Basic information
-        self.stocks = param_list[0]
-        self.precision = param_list[1]
-        self.rnn_name = param_list[2]
-        self._update_rnn_type()
+    #* NN hyper parameters
+    prefix += '_'.join(['',
+                        'NL{}'.format(args.num_layers),
+                        'HL{}'.format(args.hidden_size),
+                        'DO{}'.format(args.dropout)])
+    prefix += '_BN1' if args.use_bn else '_BN0'
 
-        #* Features
-        feature = param_list[3].split('2')
-        self.in_features, self.out_features = [], []
-        for in_feature in feature[0]:
-            self.in_features.append(self.feature_abbreviation[in_feature])
-        for out_feature in feature[1]:
-            self.out_features.append(self.feature_abbreviation[out_feature])
+    #* Train hyper parameters
+    prefix += '_'.join(['',
+                        args.optimizer_name,
+                        'LR{}'.format(args.learning_rate),
+                        'RG{}'.format(args.L2),
+                        args.loss_name])
+    return prefix
 
-        #* Past days and successive days
-        self.past_days = param_list[4][2:]
-        self.successive_days = param_list[5][2:]
 
-        #* scaler
-        self.scaler_name = param_list[6] + 'Scaler'
+def read_prefix(prefix: str) -> argparse.Namespace:
+    #* Default param
+    args = set_default()
+    param_list = prefix.split('_')
 
-        #* NN hyper parameters
-        self.num_layers = param_list[7][2:]
-        self.hidden_size = param_list[8][2:]
-        self.dropout = param_list[9][2:]
+    #* Basic information
+    args.stocks = param_list[0]
+    args.stocks_list = [args.stocks]
+    args.precision = param_list[1]
+    args.rnn_name = param_list[2]
 
-        #* Train hyper parameters
-        self.optimizer_name = param_list[10]
-        self.learning_rate = param_list[11][2:]
-        self.L2_regularization = param_list[12][2:]
-        self.loss_name = param_list[13]
+    #* Features
+    feature = param_list[3].split('2')
+    args.in_features, args.out_features = [], []
+    for in_feature in feature[0]:
+        args.in_features.append(FEATURE_ABBREVIATION[in_feature])
+    for out_feature in feature[1]:
+        args.out_features.append(FEATURE_ABBREVIATION[out_feature])
 
-        #* Update refix
-        self.prefix = prefix
+    #* Past days and successive days
+    args.past_days = int(param_list[4][2:])
+    args.successive_days = int(param_list[5][2:])
 
-    def set_parameter(self, name, value):
-        if name == 'stocks':
-            self._check_stocks(value)
-        elif 'features' in name:
-            value = self._check_features(value)
-        elif 'name' in name:
-            assert isinstance(value, str), "Expected string for {}".format(name)
-        elif ('days' in name or
-              'num_layers' == name or
-              'hidden_size' == name or
-              'early_stop_patience' == name):
-            assert isinstance(value, int), "Expected int for {}".format(name)
-        else:
-            assert isinstance(value, float), 'Expected float for {}'.format(name)
-        setattr(self, name, value)
-        if name == 'rnn_name':
-            self._update_rnn_type()
-        elif name == 'rnn_type' or name == 'bidirectional':
-            self._update_rnn_name()
+    #* scaler
+    args.scaler_name = param_list[6] + 'Scaler'
 
-    def _check_stocks(self, stocks):
-        if stocks not in STOCKS_LIST:
-            raise Exception("Given stocks is not valid")
+    #* NN hyper parameters
+    args.num_layers = int(param_list[7][2:])
+    args.hidden_size = int(param_list[8][2:])
+    args.dropout = float(param_list[9][2:])
+    args.bn = bool(param_list[10][2:])
 
-    def _check_features(self, features):
-        try:
-            features.sort(key=lambda feature: FEATURE_ORDER[feature])
-        except KeyError:
-            print("Defined in/out abb_features are invalid")
-        return features
+    #* Train hyper parameters
+    args.optimizer_name = param_list[11]
+    args.learning_rate = float(param_list[12][2:])
+    args.L2 = float(param_list[13][2:])
+    args.loss_name = param_list[14]
 
-    def _update_rnn_type(self):
-        if 'bi' in self.rnn_name:
-            self.bidirectional = True
-            self.rnn_type = self.rnn_name[2:]
-        else:
-            self.bidirectional = False
-            self.rnn_type = self.rnn_name
-
-    def _update_rnn_name(self):
-        if self.bidirectional:
-            self.rnn_name = 'bi' + self.rnn_type
-        else:
-            self.rnn_name = self.rnn_type
+    return args
 
 
 class tuner():
-    def __init__(self, parameter: default_parameter, device: torch.device):
-        #* Parameters for data input
-        self.stocks = parameter.stocks
-        self.in_features = parameter.in_features
-        self.out_features = parameter.out_features
-
-        #* Parameters for processed data
-        self.past_days = parameter.past_days
-        self.successive_days = parameter.successive_days
-        self.scaler_name = parameter.scaler_name
-
-        #* Parameters for NN
-        if "bi" in parameter.rnn_name:
-            self.rnn_type = parameter.rnn_name[2:]
-            self.bidirectional = True
-        else:
-            self.rnn_type = parameter.rnn_name
-            self.bidirectional = False
-        self.num_layers = parameter.num_layers
-        self.hidden_size = parameter.hidden_size
-        self.dropout = parameter.dropout
-
-        #* Parameters for training
-        self.optimizer_name = parameter.optimizer_name
-        self.learning_rate = parameter.learning_rate
-        self.L2_regularization = parameter.L2_regularization
-        self.loss_name = parameter.loss_name
-
-        #* Parameters for early stopping
-        self.early_stop_patience = parameter.early_stop_patience
-        self.early_stop_delta = parameter.early_stop_delta
+    def __init__(self, param: argparse.Namespace):
+        #* Save hyper parameters
+        self.param = param
 
         #* Specifiy device and declare 'data', 'model', 'optimizer', 'loss_func'
-        self.device = device
         self.data: stock_data = None
         self.model: RNN = None
         self.optimizer: optim = None
@@ -213,73 +157,45 @@ class tuner():
 
     #* Prepare to train neural network
     def _prepare_data(self):
-        self.data = stock_data(stocks=self.stocks,
-                               in_features=self.in_features,
-                               out_features=self.out_features,
-                               past_days=self.past_days,
-                               successive_days=self.successive_days,
-                               scaler_name=self.scaler_name,
+        self.data = stock_data(param=self.param,
+                               pre_process=True,
+                               use_dataset=True,
                                verbose=False)
-        self.train_loader = self.data.get_train_loader(batch_size=64)
-        self.val_loader = self.data.get_val_loader(batch_size=64)
 
     def _prepare_model(self):
-        self.model = RNN(rnn_type=self.rnn_type,
-                         in_features=self.in_features,
-                         out_features=self.out_features,
-                         successive_days=self.successive_days,
-                         bidirectional=self.bidirectional,
-                         num_layers=self.num_layers,
-                         hidden_size=self.hidden_size,
-                         dropout=self.dropout).to(self.device)
-        self.optimizer = getattr(optim, self.optimizer_name)(params=self.model.parameters(),
-                                                             lr=self.learning_rate,
-                                                             weight_decay=self.L2_regularization)
-        self.loss_func = getattr(nn, self.loss_name)(reduction='sum')
+        self.model = RNN(param=self.param).to(self.param.device)
+        self.optimizer = getattr(optim, self.param.optimizer_name)(params=self.model.parameters(),
+                                                                   lr=self.param.learning_rate,
+                                                                   weight_decay=self.param.L2)
+        self.loss_func = getattr(nn, self.param.loss_name)(reduction='sum').to(self.param.device)
         self.epoch = 0
 
     #* Train the model
     def _train(self):
         start_time = time.time()
-        train_loss_list, val_loss_list, best = utils.train(model=self.model,
-                                                           max_epoch=1000,  # Large enough to get early stop
-                                                           loss_func=self.loss_func,
-                                                           optimizer=self.optimizer,
-                                                           train_loader=self.train_loader,
-                                                           val_loader=self.val_loader,
-                                                           early_stop_patience=self.early_stop_patience,
-                                                           early_stop_delta=self.early_stop_delta,
-                                                           use_tqdm=False,
-                                                           verbose=0)
+        train_loss, val_loss, best = utils.train(model=self.model,
+                                                 data=self.data,
+                                                 max_epoch=1000,  # Large enough to get early stop
+                                                 loss_func=self.loss_func,
+                                                 optimizer=self.optimizer,
+                                                 param=self.param,
+                                                 use_tqdm=0,
+                                                 verbose=0)
+
+        #* Cut only before best epoch
         best_epoch = best[1]
-        train_loss_list = train_loss_list[:best_epoch + 1 + self.early_stop_patience]
-        val_loss_list = val_loss_list[:best_epoch + 1 + self.early_stop_patience]
-        self.result['time'] = time.time() - start_time
-        self.result['train_loss_list'] = train_loss_list
-        self.result['val_loss_list'] = val_loss_list
+        train_loss = train_loss[:best_epoch + 1 + self.param.early_stop_patience]
+        val_loss = val_loss[:best_epoch + 1 + self.param.early_stop_patience]
+        self.result['time'] = (time.time() - start_time) / len(train_loss)
+        self.result['train_loss'] = train_loss
+        self.result['val_loss'] = val_loss
         self.result['epoch'] = best_epoch
 
     #* Test the model
     def _test(self):
-        avg_prediction, avg_test_loss, avg_test_mse = utils.average_test(model=self.model,
-                                                                         data=self.data,
-                                                                         loss_func=self.loss_func,
-                                                                         verbose=False)
-        recurrent_prediction, recurrent_test_loss, recurrent_test_mse = utils.recurrent_test(model=self.model,
-                                                                                             data=self.data,
-                                                                                             loss_func=self.loss_func,
-                                                                                             verbose=False)
-        self.result['avg_test_loss'] = avg_test_loss
+        avg_prediction, avg_test_mse = utils.average_test(self.model, self.data, verbose=False)
         self.result['avg_prediction'] = avg_prediction
         self.result['avg_test_mse'] = avg_test_mse
-        self.result['recurrent_test_loss'] = recurrent_test_loss
-        self.result['recurrent_prediction'] = recurrent_prediction
-        self.result['recurrent_test_mse'] = recurrent_test_mse
-
 
 if __name__ == "__main__":
-    param = default_parameter()
-    param.read_prefix('AMZN_32_LSTM_OCHL2HL_PD80_SD1_MinMax_NL3_HL200_DO0.1_RMSprop_LR0.0005_RG1e-05_SmoothL1Loss')
-    print(param.prefix)
-    # print(param.in_features, param.out_features)
-    # print("This is module tuning")
+    print("This is module tuning")

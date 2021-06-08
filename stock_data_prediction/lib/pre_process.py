@@ -1,4 +1,5 @@
 import os
+import typing
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -68,7 +69,7 @@ import utils
 
 
 class pre_process():
-    def __init__(self, stocks, precision='32'):
+    def __init__(self, stocks: str, precision: str = '32'):
         self.stocks = stocks
         self.precision = precision
         self.np_float_dtype = getattr(np, 'float' + precision)
@@ -86,7 +87,7 @@ class pre_process():
                                      "Volume": self.np_int_dtype})
         self.col_name_list = list(self.df.columns)
 
-    def check_missing_value(self, verbose=True):
+    def check_missing_value(self, verbose: bool = True):
         self.missing_loc, self.missing_num = {}, 0
         for col in self.col_name_list:
             try:
@@ -112,11 +113,11 @@ class pre_process():
             average = np.nanmean(self.df.iloc[idx].values)
             self.df.iloc[idx] = self.df.iloc[idx].fillna(average)
 
-    def drop_column(self, col_list):
+    def drop_column(self, col_list: typing.List[str]):
         self.col_name_list = [col for col in self.col_name_list if col not in col_list]
         self.df = self.df.loc[:, self.col_name_list]
 
-    def plot(self, col_list=None, save_path=None):
+    def plot(self, col_list: typing.List[str] = None, save_path: str = None):
         if not col_list:
             col_list = self.col_name_list
 
@@ -133,7 +134,7 @@ class pre_process():
         else:
             fig.show()
 
-    def show_corr(self, save_path=None):
+    def show_corr(self, save_path: str = None):
         fig, ax = plt.subplots(figsize=(5, 5))
         corr = self.df[self.col_name_list].corr()
         mask = np.identity(len(corr))
@@ -143,7 +144,7 @@ class pre_process():
         else:
             fig.show()
 
-    def show_auto_corr(self, col_list=None, save_path=None):
+    def show_auto_corr(self, col_list: typing.List[str] = None, save_path: str = None):
         self.auto_corr = {}
         if not col_list:
             col_list = self.col_name_list
@@ -170,7 +171,10 @@ class pre_process():
         else:
             fig.show()
 
-    def save(self, file_name=None, fmt='parquet', comp='snappy', verbose=True):
+    def save(self, file_name: str = None,
+             fmt: str = 'parquet',
+             comp: str = 'snappy',
+             verbose: bool = True):
         dir_path = os.path.join("data", "pre_" + self.precision)
         if file_name:
             file_path = os.path.join(dir_path, file_name)
@@ -193,5 +197,6 @@ class pre_process():
     def dtypes(self):
         return self.df.dtypes
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     print("This is module pre_process")

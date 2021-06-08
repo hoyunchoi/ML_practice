@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 
 """
     class early_stopping: Early stops the training if validation loss doesn't improve after a given patience.
@@ -18,10 +17,10 @@ import torch
 
 
 class early_stopping:
-    def __init__(self, patience=7,
-                 verbose=False,
+    def __init__(self, patience: int = 7,
+                 verbose: bool = False,
                  min_val_loss=np.Inf,
-                 delta=0,
+                 delta: int = 0,
                  trace_func=print):
         self.patience = patience
         self.verbose = verbose
@@ -31,10 +30,13 @@ class early_stopping:
         self.delta = delta
         self.trace_func = trace_func
 
-    def __call__(self, epoch, val_loss):
+    def __call__(self, epoch: int,
+                 val_loss: float):
         if val_loss < self.min_val_loss - self.delta:
             if self.verbose:
-                self.trace_func("Epoch {}\tValidation loss decreased ({:.6f} --> {:.6f}). Saving model".format(epoch, self.min_val_loss, val_loss))
+                self.trace_func(
+                    "Epoch {}\tValidation loss decreased ({:.6f} --> {:.6f}). Saving model"
+                    .format(epoch, self.min_val_loss, val_loss))
             self.counter = 0
             self.min_val_loss = val_loss
             return True
@@ -42,7 +44,9 @@ class early_stopping:
         else:
             self.counter += 1
             if self.verbose:
-                self.trace_func("Epoch {}\tEarly Stopping counter: {}/{}".format(epoch, self.counter, self.patience))
+                self.trace_func(
+                    "Epoch {}\tEarly Stopping counter: {}/{}"
+                    .format(epoch, self.counter, self.patience))
 
             if self.counter >= self.patience:
                 self.early_stop = True
