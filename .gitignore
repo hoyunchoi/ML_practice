@@ -173,3 +173,4 @@ music_genre_classification/model
 stock_data_prediction/model
 stock_data_prediction/fig
 vanilla_RNN/fig
+extreme_learning_machine/MNIST
